@@ -1,0 +1,58 @@
+sequenceDiagram
+    autonumber
+
+    participant User
+    participant Channel as User Channel
+    participant Sup as Supervisor Agent (LangGraph)
+    participant KA as Knowledge Agent (RAG)
+    participant IdA as Identity Agent (MCP)
+    participant MA as MDM Agent (MCP)
+    participant EA as Escalation Agent
+    participant Ext as APIs / MCP Servers
+    participant ITSM as ITSM System
+
+    User->>Channel: Request (e.g., "Onboard Alice & wipe old laptop")
+    Channel->>Sup: Deliver ChatEvent + session context
+
+    %% Supervisor Planning Phase
+    Sup->>Sup: Determine intent & Plan Steps
+    note right of Sup: Supervisor creates checklist based on request
+
+    %% Branch 1: Knowledge / Policy Check
+    alt Policy Check Needed
+        Sup->>KA: Query: "What is the onboarding policy?"
+        KA->>Ext: RAG Search (sirmews/mcp-pinecone)
+        Ext-->>KA: Retrieve relevant chunks
+        KA-->>Sup: Return Policy Context
+    end
+
+    %% Branch 2: Execution Phase (The Checklist)
+    par Parallel or Sequential Execution
+        
+        %% Identity Task
+        Sup->>IdA: Cmd: "Provision User"
+        IdA->>Ext: MCP Call: identity.create_user()
+        note right of Ext: Generic Identity API (No Adobe)
+        Ext-->>IdA: Success (User ID)
+        IdA-->>Sup: Task Complete
+
+        %% Device Task
+        Sup->>MA: Cmd: "Wipe Device / Push Profile"
+        MA->>Ext: MCP Call: mdm.push_profile()
+        note right of Ext: Device Mgmt API
+        Ext-->>MA: Success (Profile Queued)
+        MA-->>Sup: Task Complete
+    end
+
+    %% Branch 3: Finalization & Escalation Logic
+    alt All Tasks Succeeded
+        Sup-->>Channel: "Onboarding Complete. User created & Device configured."
+    
+    else Task Failed / Error
+        Sup->>EA: Hand off failure context
+        EA->>ITSM: MCP Call: itsm.create_incident()
+        ITSM-->>EA: Ticket #98765
+        EA-->>Sup: Escalation Summary
+        Sup-->>Channel: "I encountered an error. Ticket #98765 created for Human IT."
+        ITSM-->>User: Email Notification
+    end
